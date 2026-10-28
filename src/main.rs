@@ -31,10 +31,74 @@ const SKIP: [&str; 6] = [
     "target",
 ];
 
+/// One manifest's lints against canon: missing, problems, opt-outs (`check`), kept and dropped
+/// (`sync`).
+type Audit<'lints> = (
+    Vec<&'lints str>,
+    Vec<String>,
+    Vec<String>,
+    Vec<(&'lints str, &'lints str)>,
+    Vec<&'lints str>,
+);
+
 /// A lint as written in a table: its key, then its lines, the `#` reason directly above first.
 type Entry<'text> = (&'text str, Vec<&'text str>);
+
 /// A flattened `[lints]` table: `name → value`, tool lints prefixed `<tool>::`.
 type Lints = BTreeMap<String, toml::Value>;
+
+/// Audits one manifest's effective lints against canon.
+#[expect(
+    clippy::single_call_fn,
+    reason = "lifted out of main, which clippy caps at 25 of cognitive complexity"
+)]
+fn audit<'lints>(
+    canon: &'lints Lints,
+    own: &'lints Lints,
+    text: &str,
+    prefix: &str,
+) -> Audit<'lints> {
+    let mut missing = Vec::new();
+    let mut problems = Vec::new();
+    let mut opt_outs = Vec::new();
+    let mut kept = Vec::new();
+    let mut dropped = Vec::new();
+    for name in canon
+        .keys()
+        .chain(own.keys().filter(|name| !canon.contains_key(*name)))
+    {
+        let want = canon.get(name).map_or(0, rank);
+        match own.get(name).map(rank) {
+            None if want > 0 => missing.push(name.as_str()),
+            Some(have) if have < want || !canon.contains_key(name) => {
+                let (tool, key) = name.split_once("::").unwrap_or(("rust", name));
+                let level = |index: usize| LEVELS.get(index).map_or("", |&(level, _)| level);
+                let what = if canon.contains_key(name) {
+                    format!("{name} {} < {}", level(have), level(want))
+                } else {
+                    name.clone()
+                };
+                if section(text, &format!("[{prefix}lints.{tool}]"))
+                    .1
+                    .iter()
+                    .any(|entry| entry.0 == key && entry.1.len() > 1)
+                {
+                    opt_outs.push(what);
+                    kept.push((tool, key));
+                } else {
+                    problems.push(format!("{what} without a reason"));
+                    dropped.push(name.as_str());
+                }
+            }
+            // stricter than canon is never drift; sync keeps it as written
+            Some(have) if have > want => {
+                kept.push(name.split_once("::").unwrap_or(("rust", name)));
+            }
+            _ => {}
+        }
+    }
+    (missing, problems, opt_outs, kept, dropped)
+}
 
 /// Flattens a `[lints]` value; `workspace = true` and other non-tables drop out.
 fn flat(lints: Option<&toml::Value>) -> Lints {
@@ -261,42 +325,8 @@ fn main() -> ExitCode {
                 } else {
                     (manifest.clone(), own_text, "", flat(lints))
                 };
-                let mut missing = Vec::new();
-                let mut problems = Vec::new();
-                let mut opt_outs = Vec::new();
-                let mut kept = Vec::new();
-                let mut dropped = Vec::new();
-                for name in canon
-                    .keys()
-                    .chain(own.keys().filter(|name| !canon.contains_key(*name)))
-                {
-                    let want = canon.get(name).map_or(0, rank);
-                    match own.get(name).map(rank) {
-                        None if want > 0 => missing.push(name.as_str()),
-                        Some(have) if have < want || !canon.contains_key(name) => {
-                            let (tool, key) = name.split_once("::").unwrap_or(("rust", name));
-                            let level =
-                                |index: usize| LEVELS.get(index).map_or("", |&(level, _)| level);
-                            let what = if canon.contains_key(name) {
-                                format!("{name} {} < {}", level(have), level(want))
-                            } else {
-                                name.clone()
-                            };
-                            if section(&text, &format!("[{prefix}lints.{tool}]"))
-                                .1
-                                .iter()
-                                .any(|entry| entry.0 == key && entry.1.len() > 1)
-                            {
-                                opt_outs.push(what);
-                                kept.push((tool, key));
-                            } else {
-                                problems.push(format!("{what} without a reason"));
-                                dropped.push(name.as_str());
-                            }
-                        }
-                        _ => {}
-                    }
-                }
+                let (missing, problems, opt_outs, kept, dropped) =
+                    audit(&canon, &own, &text, prefix);
                 let (status, detail) = if verb == "check" {
                     let shown: Vec<&str> = missing
                         .iter()
