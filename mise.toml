@@ -1,0 +1,20 @@
+# Pinned, not "stable": lints.toml enumerates this toolchain's lints, and
+# `lints inventory` fails when a bump adds or drops one.
+[tools]
+"cargo:cargo-llvm-cov" = "0.9.1"
+# hk runs the pre-push gate (hk.pkl); `hk install --mise` wires it.
+hk = "2.5.0"
+rust = "1.94.0"
+
+[tasks.check]
+description = "the gate hk's pre-push runs: fmt, clippy, 100 % line coverage, the lint inventory"
+run = [
+  "cargo fmt --check",
+  "cargo clippy --all-targets -- -D warnings",
+  { task = "cover" },
+  "cargo run -q -- inventory",
+]
+
+[tasks.cover]
+description = "the end-to-end suite under llvm-cov; anything under 100 % of lines fails"
+run = "cargo llvm-cov --fail-under-lines 100"
