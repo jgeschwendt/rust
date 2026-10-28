@@ -1,0 +1,26 @@
+name: ci
+
+# Private repo: Actions minutes are metered, so the gate runs locally (hk pre-push, the merge
+# queue); this moves to push/pull_request when the repo goes public.
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          components: clippy, llvm-tools-preview, rustfmt
+          # Must match mise.toml's pin: lints.toml enumerates this toolchain's lints, and
+          # `lints inventory` fails on any other.
+          toolchain: 1.94.0
+      # mise.toml's pin: a drifting llvm-cov drifts what the 100 % counts.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov@0.9.1
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo llvm-cov --fail-under-lines 100
+      - run: cargo run -q -- inventory
