@@ -255,6 +255,7 @@ mod tests {
         let ws = CANON.replace("[lints.", "[workspace.lints.");
         let drifted = tuned
             .replace("missing_docs = \"warn\"", "missing_docs = \"allow\"")
+            .replace("unused_results = \"warn\"", "unused_results = \"deny\"")
             .replace(
                 "[lints.clippy]\n",
                 "[lints.clippy]\nbare_allow = \"allow\"\n# a reason\nreasoned = \"allow\"\n",
@@ -292,10 +293,12 @@ mod tests {
                 "drift/main",
                 format!(
                     "{pkg}{}{tail}",
-                    tuned.replace(
-                        "rc_mutex = \"warn\"\n",
-                        "rc_mutex = \"warn\"\n# a reason\nreasoned = \"allow\"\n"
-                    )
+                    tuned
+                        .replace("unused_results = \"warn\"", "unused_results = \"deny\"")
+                        .replace(
+                            "rc_mutex = \"warn\"\n",
+                            "rc_mutex = \"warn\"\n# a reason\nreasoned = \"allow\"\n"
+                        )
                 ),
             ),
             ("ws/main", format!("{head}{ws}")),
