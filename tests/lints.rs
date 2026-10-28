@@ -240,6 +240,94 @@ mod tests {
         )
     }
 
+    /// `sync` writes the canonical table into every crate the walk finds, keeping reasoned
+    /// opt-outs and printing the unreasoned ones it drops; a second run writes nothing, `check`
+    /// after it lists only opt-outs, and an unwritable manifest exits 2.
+    #[test]
+    fn sync() -> Outcome {
+        let home = home("sync")?;
+        let grove = ".grove/code/jgeschwendt";
+        let pkg = "[package]\nname = \"x\"\n\n";
+        let head = "[workspace]\nmembers = [\"a\", \"b\"]\n\n";
+        let tail = "\n# kept\n[profile.release]\nstrip = true\n";
+        let deny = "# one file expects unsafe\nunsafe_code = \"deny\"";
+        let tuned = CANON.replace("unsafe_code = \"forbid\"", deny);
+        let ws = CANON.replace("[lints.", "[workspace.lints.");
+        let drifted = tuned
+            .replace("missing_docs = \"warn\"", "missing_docs = \"allow\"")
+            .replace(
+                "[lints.clippy]\n",
+                "[lints.clippy]\nbare_allow = \"allow\"\n# a reason\nreasoned = \"allow\"\n",
+            );
+        let member = format!("{pkg}\n[lints]\nworkspace = true\n");
+        for (path, text) in [
+            ("bare/main/Cargo.toml", pkg.to_owned()),
+            ("clean/main/Cargo.toml", format!("{pkg}{CANON}")),
+            ("drift/main/Cargo.toml", format!("{pkg}{drifted}{tail}")),
+            (
+                "ws/main/Cargo.toml",
+                format!("{head}{}", ws.replace("unused_results = \"warn\"\n", "")),
+            ),
+            ("ws/main/a/Cargo.toml", member.clone()),
+            ("ws/main/b/Cargo.toml", pkg.to_owned()),
+        ] {
+            put(&home, &format!("{grove}/{path}"), &text, 0o644)?;
+        }
+        let table = "| crate | status | detail |\n| --- | --- | --- |\n";
+        same(
+            &lints(&home, &["sync"], &[])?,
+            &format!(
+                "0\n{table}| bare/main | synced |  |\n| clean/main | unchanged |  |\n| drift/main | synced | dropped: missing_docs, clippy::bare_allow |\n| ws/main/a | synced |  |\n| ws/main/b | synced |  |\n"
+            ),
+        )?;
+        for (path, want) in [
+            (
+                "bare/main",
+                format!(
+                    "{pkg}\n[lints.rust]{}",
+                    CANON.split_once("[lints.rust]").ok_or("no rust table")?.1
+                ),
+            ),
+            (
+                "drift/main",
+                format!(
+                    "{pkg}{}{tail}",
+                    tuned.replace(
+                        "rc_mutex = \"warn\"\n",
+                        "rc_mutex = \"warn\"\n# a reason\nreasoned = \"allow\"\n"
+                    )
+                ),
+            ),
+            ("ws/main", format!("{head}{ws}")),
+            ("ws/main/b", member),
+        ] {
+            same(
+                &fs::read_to_string(home.join(grove).join(path).join("Cargo.toml"))?,
+                &want,
+            )?;
+        }
+        same(
+            &lints(&home, &["sync"], &[])?,
+            &format!(
+                "0\n{table}| bare/main | unchanged |  |\n| clean/main | unchanged |  |\n| drift/main | unchanged |  |\n| ws/main/a | unchanged |  |\n| ws/main/b | unchanged |  |\n"
+            ),
+        )?;
+        same(
+            &lints(&home, &["check"], &[])?,
+            &format!(
+                "0\n{table}| bare/main | clean |  |\n| clean/main | clean |  |\n| drift/main | clean | opt-outs: unsafe_code deny < forbid, clippy::reasoned |\n| ws/main/a | clean |  |\n| ws/main/b | clean |  |\n"
+            ),
+        )?;
+        put(&home, "ro/Cargo.toml", pkg, 0o444)?;
+        same(
+            &lints(&home, &["sync", "ro"], &[])?,
+            &format!(
+                "2\n{table}| {}/ro | failed (Permission denied (os error 13)) |  |\n",
+                home.display()
+            ),
+        )
+    }
+
     /// An unknown verb prints usage and exits 2.
     #[test]
     fn usage() -> Outcome {

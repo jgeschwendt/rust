@@ -1,6 +1,7 @@
 //! `lints` holds every jgeschwendt crate to one canonical `[lints]` table: `check` diffs
-//! each crate's table against it, `report` counts what clippy finds under it, and
-//! `inventory` diffs it against the pinned toolchain's lint lists.
+//! each crate's table against it, `sync` writes it in keeping reasoned opt-outs, `report`
+//! counts what clippy finds under it, and `inventory` diffs it against the pinned toolchain's
+//! lint lists.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read as _;
@@ -9,7 +10,7 @@ use std::os::unix::process::CommandExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio, id};
 use std::time::{Duration, Instant};
-use std::{env, fs, thread};
+use std::{env, fs, mem, thread};
 
 /// The canonical table, verbatim as a crate pastes it into its Cargo.toml.
 const CANON: &str = include_str!("../lints.toml");
@@ -30,6 +31,8 @@ const SKIP: [&str; 6] = [
     "target",
 ];
 
+/// A lint as written in a table: its key, then its lines, the `#` reason directly above first.
+type Entry<'text> = (&'text str, Vec<&'text str>);
 /// A flattened `[lints]` table: `name → value`, tool lints prefixed `<tool>::`.
 type Lints = BTreeMap<String, toml::Value>;
 
@@ -67,6 +70,58 @@ fn read(path: &Path) -> Option<(String, toml::Table)> {
     let text = fs::read_to_string(path).ok()?;
     let table = text.parse().ok()?;
     Some((text, table))
+}
+
+/// The lints under `header` in `text`, and the span of lines a rewrite replaces: from below
+/// the header to past its last lint, `None` when the table is absent.
+fn section<'text>(text: &'text str, header: &str) -> (Option<(usize, usize)>, Vec<Entry<'text>>) {
+    let lines: Vec<&str> = text.split_inclusive('\n').collect();
+    let start = lines
+        .iter()
+        .position(|line| line.trim() == header)
+        .map(|head| head.saturating_add(1));
+    let mut end = start.unwrap_or(lines.len());
+    let mut reason = Vec::new();
+    let mut entries = Vec::new();
+    for (index, &line) in lines
+        .iter()
+        .enumerate()
+        .skip(end)
+        .take_while(|&(_, line)| !line.starts_with('['))
+    {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            reason.clear();
+        } else {
+            reason.push(line);
+            if !trimmed.starts_with('#') {
+                let key = trimmed.split_once('=').map_or(trimmed, |pair| pair.0);
+                entries.push((key.trim(), mem::take(&mut reason)));
+                end = index.saturating_add(1);
+            }
+        }
+    }
+    (start.map(|from| (from, end)), entries)
+}
+
+/// `text` with the lints under `header` replaced by `entries`; an absent table is appended.
+fn splice(text: &str, header: &str, entries: &[Entry<'_>]) -> String {
+    let lines: Vec<&str> = text.split_inclusive('\n').collect();
+    let span = section(text, header).0;
+    let (start, end) = span.unwrap_or((lines.len(), lines.len()));
+    lines
+        .iter()
+        .take(start)
+        .map(|&line| line.to_owned())
+        .chain(span.is_none().then(|| format!("\n{header}\n")))
+        .chain(
+            entries
+                .iter()
+                .flat_map(|entry| &entry.1)
+                .map(|line| format!("{}\n", line.trim_end())),
+        )
+        .chain(lines.iter().skip(end).map(|&line| line.to_owned()))
+        .collect()
 }
 
 /// Pushes every `Cargo.toml` with a `[package]` under `dir`, skipping [`SKIP`] and symlinks.
@@ -172,8 +227,8 @@ fn main() -> ExitCode {
         })
         .collect();
     match verb.as_str() {
-        "check" => {
-            let mut drift = false;
+        "check" | "sync" => {
+            let mut code = 0u8;
             println!("| crate | status | detail |\n| --- | --- | --- |");
             for (manifest, label) in manifests.iter().zip(&labels) {
                 let (own_text, table) = read(manifest).unwrap_or_default();
@@ -182,30 +237,35 @@ fn main() -> ExitCode {
                     .and_then(|value| value.get("workspace"))
                     .and_then(toml::Value::as_bool)
                     == Some(true);
-                let (text, prefix, own) = if inherits {
-                    manifest
-                        .ancestors()
-                        .skip(1)
-                        .find_map(|dir| {
-                            read(&dir.join("Cargo.toml"))
-                                .filter(|root| root.1.contains_key("workspace"))
-                        })
-                        .map_or_else(Default::default, |(root_text, root)| {
-                            (
-                                root_text,
-                                "workspace.",
-                                flat(
-                                    root.get("workspace")
-                                        .and_then(|workspace| workspace.get("lints")),
-                                ),
-                            )
-                        })
+                let root = manifest.ancestors().skip(1).find_map(|dir| {
+                    let path = dir.join("Cargo.toml");
+                    read(&path)
+                        .filter(|found| found.1.contains_key("workspace"))
+                        .map(|found| (path, found))
+                });
+                // sync adopts a lint-less member into its workspace's table.
+                let adopt = verb == "sync" && lints.is_none() && root.is_some();
+                let (path, text, prefix, own) = if inherits || adopt {
+                    root.map_or_else(Default::default, |(path, (root_text, found))| {
+                        (
+                            path,
+                            root_text,
+                            "workspace.",
+                            flat(
+                                found
+                                    .get("workspace")
+                                    .and_then(|workspace| workspace.get("lints")),
+                            ),
+                        )
+                    })
                 } else {
-                    (own_text, "", flat(lints))
+                    (manifest.clone(), own_text, "", flat(lints))
                 };
                 let mut missing = Vec::new();
                 let mut problems = Vec::new();
                 let mut opt_outs = Vec::new();
+                let mut kept = Vec::new();
+                let mut dropped = Vec::new();
                 for name in canon
                     .keys()
                     .chain(own.keys().filter(|name| !canon.contains_key(*name)))
@@ -215,13 +275,6 @@ fn main() -> ExitCode {
                         None if want > 0 => missing.push(name.as_str()),
                         Some(have) if have < want || !canon.contains_key(name) => {
                             let (tool, key) = name.split_once("::").unwrap_or(("rust", name));
-                            let header = format!("[{prefix}lints.{tool}]");
-                            let body: Vec<&str> = text
-                                .lines()
-                                .skip_while(|line| line.trim() != header)
-                                .skip(1)
-                                .take_while(|line| !line.starts_with('['))
-                                .collect();
                             let level =
                                 |index: usize| LEVELS.get(index).map_or("", |&(level, _)| level);
                             let what = if canon.contains_key(name) {
@@ -229,39 +282,100 @@ fn main() -> ExitCode {
                             } else {
                                 name.clone()
                             };
-                            if body.windows(2).any(|pair| matches!(pair, [above, line] if above.trim_start().starts_with('#') && line.split('=').next().map(str::trim) == Some(key))) {
+                            if section(&text, &format!("[{prefix}lints.{tool}]"))
+                                .1
+                                .iter()
+                                .any(|entry| entry.0 == key && entry.1.len() > 1)
+                            {
                                 opt_outs.push(what);
+                                kept.push((tool, key));
                             } else {
                                 problems.push(format!("{what} without a reason"));
+                                dropped.push(name.as_str());
                             }
                         }
                         _ => {}
                     }
                 }
-                let shown: Vec<&str> = missing.iter().copied().take(3).collect();
-                let more = if missing.len() > shown.len() {
-                    ", \u{2026}"
+                let (status, detail) = if verb == "check" {
+                    let shown: Vec<&str> = missing
+                        .iter()
+                        .copied()
+                        .take(3)
+                        .chain((missing.len() > 3).then_some("\u{2026}"))
+                        .collect();
+                    let head = if own.is_empty() {
+                        "no lints table".to_owned()
+                    } else {
+                        format!("missing {}: {}", missing.len(), shown.join(", "))
+                    };
+                    let mut detail: Vec<String> = (own.is_empty() || !missing.is_empty())
+                        .then_some(head)
+                        .into_iter()
+                        .chain(problems)
+                        .collect();
+                    let drift = !detail.is_empty();
+                    code = code.max(u8::from(drift));
+                    detail.extend(
+                        (!opt_outs.is_empty())
+                            .then(|| format!("opt-outs: {}", opt_outs.join(", "))),
+                    );
+                    let status = if drift { "drift" } else { "clean" };
+                    (status.to_owned(), detail.join("; "))
                 } else {
-                    ""
+                    let mut synced = text.clone();
+                    for tool in ["rust", "clippy"] {
+                        let header = format!("[{prefix}lints.{tool}]");
+                        let mut merged = section(CANON, &format!("[lints.{tool}]")).1;
+                        for entry in section(&synced, &header)
+                            .1
+                            .into_iter()
+                            .filter(|entry| kept.contains(&(tool, entry.0)))
+                        {
+                            // in its canonical slot, else in alphabetical position.
+                            let at = merged
+                                .iter()
+                                .position(|canonical| canonical.0 == entry.0)
+                                .or_else(|| {
+                                    merged
+                                        .iter()
+                                        .rposition(|canonical| canonical.0 < entry.0)
+                                        .map(|before| before.saturating_add(1))
+                                })
+                                .unwrap_or_default();
+                            merged.retain(|canonical| canonical.0 != entry.0);
+                            merged.insert(at, entry);
+                        }
+                        synced = splice(&synced, &header, &merged);
+                    }
+                    let written: Result<Vec<()>, _> = (synced != text)
+                        .then(|| fs::write(&path, &synced))
+                        .into_iter()
+                        // after the root's write: a root package is its own member.
+                        .chain(adopt.then(|| {
+                            let member = fs::read_to_string(manifest)?;
+                            let entry = ("workspace", vec!["workspace = true"]);
+                            fs::write(manifest, splice(&member, "[lints]", &[entry]))
+                        }))
+                        .collect();
+                    let status = match written {
+                        Ok(writes) if writes.is_empty() => "unchanged".to_owned(),
+                        Ok(_) => "synced".to_owned(),
+                        Err(error) => {
+                            code = 2;
+                            format!("failed ({error})")
+                        }
+                    };
+                    let detail = if dropped.is_empty() {
+                        String::new()
+                    } else {
+                        format!("dropped: {}", dropped.join(", "))
+                    };
+                    (status, detail)
                 };
-                let head = if own.is_empty() {
-                    "no lints table".to_owned()
-                } else {
-                    format!("missing {}: {}{more}", missing.len(), shown.join(", "))
-                };
-                let mut detail: Vec<String> = (own.is_empty() || !missing.is_empty())
-                    .then_some(head)
-                    .into_iter()
-                    .chain(problems)
-                    .collect();
-                let status = if detail.is_empty() { "clean" } else { "drift" };
-                drift |= !detail.is_empty();
-                detail.extend(
-                    (!opt_outs.is_empty()).then(|| format!("opt-outs: {}", opt_outs.join(", "))),
-                );
-                println!("| {label} | {status} | {} |", detail.join("; "));
+                println!("| {label} | {status} | {detail} |");
             }
-            ExitCode::from(u8::from(drift))
+            ExitCode::from(code)
         }
         "report" => {
             let timeout: u64 = env::var("LINTS_TIMEOUT_SECS")
@@ -469,7 +583,9 @@ fn main() -> ExitCode {
             ExitCode::from(u8::from(!(missing.is_empty() && unknown.is_empty())))
         }
         _ => {
-            eprintln!("usage: lints check [<dir>...] | lints report [<dir>...] | lints inventory");
+            eprintln!(
+                "usage: lints check [<dir>...] | lints sync [<dir>...] | lints report [<dir>...] | lints inventory"
+            );
             ExitCode::from(2)
         }
     }
