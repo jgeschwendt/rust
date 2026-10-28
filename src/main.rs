@@ -213,7 +213,7 @@ fn main() -> ExitCode {
                     let want = canon.get(name).map_or(0, rank);
                     match own.get(name).map(rank) {
                         None if want > 0 => missing.push(name.as_str()),
-                        Some(0) if want > 0 || !canon.contains_key(name) => {
+                        Some(have) if have < want || !canon.contains_key(name) => {
                             let (tool, key) = name.split_once("::").unwrap_or(("rust", name));
                             let header = format!("[{prefix}lints.{tool}]");
                             let body: Vec<&str> = text
@@ -222,16 +222,18 @@ fn main() -> ExitCode {
                                 .skip(1)
                                 .take_while(|line| !line.starts_with('['))
                                 .collect();
-                            if body.windows(2).any(|pair| matches!(pair, [above, line] if above.trim_start().starts_with('#') && line.split('=').next().map(str::trim) == Some(key))) {
-                                opt_outs.push(name.as_str());
-                            } else {
-                                problems.push(format!("{name} allowed without a reason"));
-                            }
-                        }
-                        Some(have) if have < want => {
                             let level =
                                 |index: usize| LEVELS.get(index).map_or("", |&(level, _)| level);
-                            problems.push(format!("{name} {} < {}", level(have), level(want)));
+                            let what = if canon.contains_key(name) {
+                                format!("{name} {} < {}", level(have), level(want))
+                            } else {
+                                name.clone()
+                            };
+                            if body.windows(2).any(|pair| matches!(pair, [above, line] if above.trim_start().starts_with('#') && line.split('=').next().map(str::trim) == Some(key))) {
+                                opt_outs.push(what);
+                            } else {
+                                problems.push(format!("{what} without a reason"));
+                            }
                         }
                         _ => {}
                     }
