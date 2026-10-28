@@ -69,6 +69,11 @@ mod tests {
         let tuned = CANON
             .replace("unsafe_code = \"forbid\"", "unsafe_code = \"warn\"")
             .replace(
+                "unused_results = \"warn\"",
+                "# one file expects it\nunused_results = \"allow\"",
+            )
+            .replace("missing_docs = \"warn\"", "missing_docs = \"allow\"")
+            .replace(
                 "[lints.clippy]\n",
                 "[lints.clippy]\nbare_allow = \"allow\"\n# a reason\nreasoned = \"allow\"\n",
             );
@@ -102,7 +107,7 @@ mod tests {
 | bare/main | drift | no lints table |
 | bare/main/orphan | drift | no lints table |
 | clean/main | clean |  |
-| drift/main | drift | unsafe_code warn < forbid; clippy::bare_allow allowed without a reason; opt-outs: clippy::reasoned |
+| drift/main | drift | missing_docs allow < warn without a reason; unsafe_code warn < forbid without a reason; clippy::bare_allow without a reason; opt-outs: unused_results allow < warn, clippy::reasoned |
 | few/main | drift | missing 1: unused_results |
 | ws/main/member | clean |  |
 ",

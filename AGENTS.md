@@ -21,7 +21,7 @@ commands:
 
 ## Usage
 
-Paste `lints.toml` into a crate's `Cargo.toml` as-is, or under `[workspace.lints.*]` with `[lints] workspace = true` in each member. Cargo inherits lints only from a crate's own workspace, so the table is copied, never referenced. A crate's own opt-outs go below it: an `allow` with a `#` reason on the line above.
+Paste `lints.toml` into a crate's `Cargo.toml` as-is, or under `[workspace.lints.*]` with `[lints] workspace = true` in each member. Cargo inherits lints only from a crate's own workspace, so the table is copied, never referenced. A crate's own opt-outs are edits to its copy: an `allow`, or a weaker level, with a `#` reason on the line above.
 
 The table: every stable rustc allow-by-default lint at `warn`, `unsafe_code` at `forbid`; clippy's `all`, `pedantic`, `nursery`, `cargo` groups at `warn`, priority -1; every `restriction` lint on its own line, since `blanket_clippy_restriction_lints` fires on the group. rustc's unstable lints are absent: naming one at any level trips `unknown_lints` on stable (probed on 1.94.0).
 
@@ -29,7 +29,7 @@ The table: every stable rustc allow-by-default lint at `warn`, `unsafe_code` at 
 
 Run from this repo: `mise x -C <this repo> -- cargo run --release -q -- <verb>`.
 
-- `lints check [<dir>…]` — each package's effective table (`workspace = true` reads the root's `[workspace.lints]`) against `lints.toml`. Drift: a canonical lint missing or weaker, an `allow` with no `#` comment on the line above, no table at all. A reasoned `allow` is an opt-out, listed. Exit 1 on drift.
+- `lints check [<dir>…]` — each package's effective table (`workspace = true` reads the root's `[workspace.lints]`) against `lints.toml`. Drift: a canonical lint missing, a lint weaker than canon or an extra `allow` with no `#` comment on the line above, no table at all. A reasoned weaker level (`unsafe_code` at `deny` for one `#[expect]` file) or a reasoned `allow` is an opt-out, listed. Exit 1 on drift.
 - `lints report [<dir>…]` — `mise x -C <crate> -- cargo clippy --all-targets --no-deps --message-format=json -- <flags>`, the flags `lints.toml` as `-A/-W/-D/-F`, groups first; prints warnings per lint per crate, deduplicated across targets, then each crate's run outcome. `LINTS_TIMEOUT_SECS` (default 900) bounds each crate. Trailing args override the crate's own `[lints]` — a `deny` dropped by `-A`, an `allow` raised by `-W` (probed on 1.94.0, 2026-10-28) — but `#[allow]`s in source still win.
 - `lints inventory` — `lints.toml` against `clippy-driver -W help` plus an empty-crate `rustc` compile that names the unstable lints; prints lints the toolchain has that the table lacks and names the toolchain lacks. Exit 1 on either. Part of `mise run check`, so a toolchain bump surfaces every lint diff.
 
