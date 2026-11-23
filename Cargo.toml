@@ -113,7 +113,9 @@ deref_by_slicing = "warn"
 disallowed_script_idents = "warn"
 doc_include_without_cfg = "warn"
 doc_paragraphs_missing_punctuation = "warn"
-else_if_without_else = "warn"
+# Asks for more `else`; redundant_else removes them, and an empty `else {}` trips
+# needless_else, so no fix exists (owner, 2026-11-23).
+else_if_without_else = "allow"
 empty_drop = "warn"
 empty_enum_variants_with_brackets = "warn"
 empty_structs_with_brackets = "warn"

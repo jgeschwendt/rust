@@ -37,4 +37,6 @@ Run from this repo: `mise x -C <this repo> -- cargo run --release -q -- <verb>`.
 
 With no dirs, `check`, `sync` and `report` walk every `~/.grove/code/jgeschwendt/*/main`, skipping `target/`, `node_modules/`, `.archive/`, `deps/`, `_build/`, and act only on the crates `tracked.toml` lists; crate paths print relative to that root. Tracking is opt-in: `check` ends with `untracked: <n>`, the walked crates left out, which never sets the exit code; a listed crate the walk does not find exits 2 before any work. Explicit dirs bypass the list, so a crate is checked or synced before it is opted in. The routine `~/.routines/lints-drift.md` runs `check` daily and exits 1 on drift.
 
+`clippy::single_call_fn` stays on, and is met by shape, not by attribute: a step used once, always run and short is a `let name = { … };` block in place; a step that is lazy, a callback, a subcommand's entry or called by a test stays a function under `#[expect(clippy::single_call_fn, reason = "…")]`. Never a helper invented to save lines. (since 2026-11-23 · owner on the canon form: "high standards everywhere"; "do not collapse to the point of hasty abstractions, use language for language")
+
 The toolchain is pinned in `mise.toml`: `lints.toml` enumerates that toolchain's lints, and `inventory` fails on any other.
