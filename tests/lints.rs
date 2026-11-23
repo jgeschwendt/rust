@@ -6,6 +6,7 @@ use serde_json as _;
 #[cfg(test)]
 mod tests {
     use std::error::Error;
+    use std::iter::once;
     use std::os::unix::fs::PermissionsExt as _;
     use std::path::{Path, PathBuf};
     use std::process::{Command, id};
@@ -13,6 +14,8 @@ mod tests {
 
     /// The canonical table under test.
     const CANON: &str = include_str!("../lints.toml");
+    /// The crates a dirless walk acts on.
+    const TRACKED: &str = include_str!("../tracked.toml");
     /// A test's fallible outcome.
     type Outcome = Result<(), Box<dyn Error>>;
 
@@ -59,7 +62,7 @@ mod tests {
         }
     }
 
-    /// `check` sorts every crate the walk finds into clean, drift and opt-outs.
+    /// `check` sorts every crate under the dirs into clean, drift and opt-outs.
     #[test]
     fn check() -> Outcome {
         let home = home("check")?;
@@ -100,7 +103,7 @@ mod tests {
             put(&home, &format!("{grove}/{path}"), &text, 0o644)?;
         }
         same(
-            &lints(&home, &["check"], &[])?,
+            &lints(&home, &["check", grove], &[])?,
             "1
 | crate | status | detail |
 | --- | --- | --- |
@@ -208,7 +211,11 @@ mod tests {
             0o755,
         )?;
         same(
-            &lints(&home, &["report"], &[("LINTS_TIMEOUT_SECS", "1")])?,
+            &lints(
+                &home,
+                &["report", ".grove/code/jgeschwendt"],
+                &[("LINTS_TIMEOUT_SECS", "1")],
+            )?,
             "0
 | lint | total | a/main | b/main | fail/main | killed/main | slow/main |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -240,7 +247,7 @@ mod tests {
         )
     }
 
-    /// `sync` writes the canonical table into every crate the walk finds, keeping reasoned
+    /// `sync` writes the canonical table into every crate under the dirs, keeping reasoned
     /// opt-outs and printing the unreasoned ones it drops; a second run writes nothing, `check`
     /// after it lists only opt-outs, and an unwritable manifest exits 2.
     #[test]
@@ -276,7 +283,7 @@ mod tests {
         }
         let table = "| crate | status | detail |\n| --- | --- | --- |\n";
         same(
-            &lints(&home, &["sync"], &[])?,
+            &lints(&home, &["sync", grove], &[])?,
             &format!(
                 "0\n{table}| bare/main | synced |  |\n| clean/main | unchanged |  |\n| drift/main | synced | dropped: missing_docs, clippy::bare_allow |\n| ws/main/a | synced |  |\n| ws/main/b | synced |  |\n"
             ),
@@ -310,13 +317,13 @@ mod tests {
             )?;
         }
         same(
-            &lints(&home, &["sync"], &[])?,
+            &lints(&home, &["sync", grove], &[])?,
             &format!(
                 "0\n{table}| bare/main | unchanged |  |\n| clean/main | unchanged |  |\n| drift/main | unchanged |  |\n| ws/main/a | unchanged |  |\n| ws/main/b | unchanged |  |\n"
             ),
         )?;
         same(
-            &lints(&home, &["check"], &[])?,
+            &lints(&home, &["check", grove], &[])?,
             &format!(
                 "0\n{table}| bare/main | clean |  |\n| clean/main | clean |  |\n| drift/main | clean | opt-outs: unsafe_code deny < forbid, clippy::reasoned |\n| ws/main/a | clean |  |\n| ws/main/b | clean |  |\n"
             ),
@@ -329,6 +336,49 @@ mod tests {
                 home.display()
             ),
         )
+    }
+
+    /// With no dirs, `check` acts on the walked crates tracked.toml lists and counts the rest;
+    /// a listed crate the walk misses exits 2 from `check`, `report` and `sync`.
+    #[test]
+    fn tracked() -> Outcome {
+        let home = home("tracked")?;
+        let list: toml::Table = TRACKED.parse()?;
+        let mut crates: Vec<&str> = list
+            .get("crates")
+            .and_then(toml::Value::as_array)
+            .ok_or("no crates")?
+            .iter()
+            .filter_map(toml::Value::as_str)
+            .collect();
+        crates.sort_by_cached_key(|name| Path::new(name).join("Cargo.toml"));
+        for name in crates.iter().chain(once(&"untracked-scratch/main")) {
+            put(
+                &home,
+                &format!(".grove/code/jgeschwendt/{name}/Cargo.toml"),
+                &format!("[package]\nname = \"x\"\n\n{CANON}"),
+                0o644,
+            )?;
+        }
+        let rows: Vec<String> = crates
+            .iter()
+            .map(|name| format!("| {name} | clean |  |\n"))
+            .collect();
+        same(
+            &lints(&home, &["check"], &[])?,
+            &format!(
+                "0\n| crate | status | detail |\n| --- | --- | --- |\n{}\nuntracked: 1\n",
+                rows.concat()
+            ),
+        )?;
+        fs::remove_file(home.join(format!(
+            ".grove/code/jgeschwendt/{}/Cargo.toml",
+            crates.first().ok_or("empty")?
+        )))?;
+        for verb in ["check", "report", "sync"] {
+            same(&lints(&home, &[verb], &[])?, "2\n")?;
+        }
+        Ok(())
     }
 
     /// An unknown verb prints usage and exits 2.

@@ -31,6 +31,9 @@ const SKIP: [&str; 6] = [
     "target",
 ];
 
+/// The crates a dirless walk acts on, by path relative to the grove.
+const TRACKED: &str = include_str!("../tracked.toml");
+
 /// One manifest's lints against canon: missing, problems, opt-outs (`check`), kept and dropped
 /// (`sync`).
 type Audit<'lints> = (
@@ -266,7 +269,8 @@ fn main() -> ExitCode {
         .join(".grove/code/jgeschwendt");
     let grove = fs::canonicalize(&home).unwrap_or(home);
     let mut dirs: Vec<PathBuf> = args.map(PathBuf::from).collect();
-    if dirs.is_empty() {
+    let walked = dirs.is_empty();
+    if walked {
         dirs = fs::read_dir(&grove)
             .into_iter()
             .flatten()
@@ -274,23 +278,49 @@ fn main() -> ExitCode {
             .map(|entry| entry.path().join("main"))
             .collect();
     }
-    let mut manifests = Vec::new();
+    let mut paths = Vec::new();
     for dir in &dirs {
-        walk(dir, &mut manifests);
+        walk(dir, &mut paths);
     }
-    manifests.sort();
-    manifests.dedup();
-    let labels: Vec<String> = manifests
-        .iter()
+    paths.sort();
+    paths.dedup();
+    let opted = TRACKED.parse::<toml::Table>().unwrap_or_default();
+    let tracked: Vec<&str> = opted
+        .get("crates")
+        .and_then(toml::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(toml::Value::as_str)
+        .collect();
+    let mut crates: Vec<(PathBuf, String)> = paths
+        .into_iter()
         .map(|manifest| {
-            let dir = manifest.parent().unwrap_or(manifest);
-            dir.strip_prefix(&grove)
+            let dir = manifest.parent().unwrap_or(&manifest);
+            let label = dir
+                .strip_prefix(&grove)
                 .unwrap_or(dir)
                 .display()
-                .to_string()
+                .to_string();
+            (manifest, label)
         })
         .collect();
+    let stale: Vec<&str> = tracked
+        .iter()
+        .copied()
+        .filter(|&name| walked && !crates.iter().any(|pair| pair.1 == name))
+        .collect();
+    let seen = crates.len();
+    crates.retain(|pair| !walked || tracked.contains(&pair.1.as_str()));
+    let untracked = seen.saturating_sub(crates.len());
+    let (manifests, labels): (Vec<PathBuf>, Vec<String>) = crates.into_iter().unzip();
     match verb.as_str() {
+        "check" | "report" | "sync" if !stale.is_empty() => {
+            eprintln!(
+                "tracked.toml lists crates the walk misses: {}",
+                stale.join(", ")
+            );
+            ExitCode::from(2)
+        }
         "check" | "sync" => {
             let mut code = 0u8;
             println!("| crate | status | detail |\n| --- | --- | --- |");
@@ -404,6 +434,9 @@ fn main() -> ExitCode {
                     (status, detail)
                 };
                 println!("| {label} | {status} | {detail} |");
+            }
+            if walked && verb == "check" {
+                println!("\nuntracked: {untracked}");
             }
             ExitCode::from(code)
         }

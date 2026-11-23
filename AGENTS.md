@@ -18,6 +18,7 @@ commands:
 | `Cargo.toml`    | carries `lints.toml` verbatim (`tests/lints.rs` `dogfood` asserts it)                                  |
 | `src/main.rs`   | the whole binary: crate walk, `check`, `sync`, `report`, `inventory`                                   |
 | `tests/lints.rs` | end-to-end suite over temp groves with sh stubs for `mise`, `clippy-driver`, `rustc`; never the real grove |
+| `tracked.toml`  | `crates`, the opted-in crate paths relative to the grove root, alpha-sorted; compiled in like `lints.toml` |
 
 ## Usage
 
@@ -34,6 +35,6 @@ Run from this repo: `mise x -C <this repo> -- cargo run --release -q -- <verb>`.
 - `lints report [<dir>…]` — `mise x -C <crate> -- cargo clippy --all-targets --no-deps --message-format=json -- <flags>`, the flags `lints.toml` as `-A/-W/-D/-F`, groups first; prints warnings per lint per crate, deduplicated across targets, then each crate's run outcome. `LINTS_TIMEOUT_SECS` (default 900) bounds each crate. Trailing args override the crate's own `[lints]` — a `deny` dropped by `-A`, an `allow` raised by `-W` (probed on 1.94.0, 2026-10-28) — but `#[allow]`s in source still win.
 - `lints inventory` — `lints.toml` against `clippy-driver -W help` plus an empty-crate `rustc` compile that names the unstable lints; prints lints the toolchain has that the table lacks and names the toolchain lacks. Exit 1 on either. Part of `mise run check`, so a toolchain bump surfaces every lint diff.
 
-With no dirs, `check`, `sync` and `report` walk every `~/.grove/code/jgeschwendt/*/main`, skipping `target/`, `node_modules/`, `.archive/`, `deps/`, `_build/`; crate paths print relative to that root. The routine `~/.routines/lints-drift.md` runs `check` daily and opens the docket thread `lints-drift:rust` on drift.
+With no dirs, `check`, `sync` and `report` walk every `~/.grove/code/jgeschwendt/*/main`, skipping `target/`, `node_modules/`, `.archive/`, `deps/`, `_build/`, and act only on the crates `tracked.toml` lists; crate paths print relative to that root. Tracking is opt-in: `check` ends with `untracked: <n>`, the walked crates left out, which never sets the exit code; a listed crate the walk does not find exits 2 before any work. Explicit dirs bypass the list, so a crate is checked or synced before it is opted in. The routine `~/.routines/lints-drift.md` runs `check` daily and exits 1 on drift.
 
 The toolchain is pinned in `mise.toml`: `lints.toml` enumerates that toolchain's lints, and `inventory` fails on any other.
