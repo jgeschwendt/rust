@@ -1,0 +1,3 @@
+[exhaustiveness]
+# `.github` is CI wiring; `src` and `tests` are one file each, reached by the root node's anchors.
+exclude = [".github", "src", "tests"]
