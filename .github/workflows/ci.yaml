@@ -24,3 +24,8 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo llvm-cov --fail-under-lines 100
       - run: cargo run -q -- inventory
+      # stele graph gate (check → emit --check). NEVER `stele build` here: build is the
+      # sole writer of .stele/graph.lock, so running it would make check pass trivially.
+      - run: curl -fsSL https://raw.githubusercontent.com/jgeschwendt/stele/main/scripts/install.sh | bash -s v0.3.0
+      - run: ~/.local/bin/stele check
+      - run: ~/.local/bin/stele emit --check

@@ -8,7 +8,36 @@ commands:
   cover: mise run cover
   lint: cargo clippy --all-targets -- -D warnings && cargo fmt --check
   test: cargo test
+invariants:
+  - claim: lints.toml is compiled into the binary, and Cargo.toml carries it verbatim
+    anchor: src/main.rs#CANON
+  - claim: the dirless walk skips .archive, .git, _build, deps, node_modules and target
+    anchor: src/main.rs#SKIP
+  - claim: tracked.toml is compiled in; a dirless walk acts only on the crates it lists
+    anchor: src/main.rs#TRACKED
+  - claim: tests/lints.rs dogfood asserts Cargo.toml carries lints.toml verbatim
+    anchor: tests/lints.rs#dogfood
 ```
+
+<!-- @stele -->
+
+## Hazards (0 active)
+
+
+## Map
+
+| node | kind | purpose | unfold |
+| ---- | ---- | ------- | ------ |
+
+## Indexes
+
+All invariants: `.stele/index/invariants.md` · all hazards: `.stele/index/hazards.md`
+
+## Engine
+
+`stele` CLI available → `stele root | unfold <id> | invariants --touching <path> | hazards | nodes --kind <k>`. MCP: `stele serve`.
+No engine → everything above is complete; nested AGENTS.md files carry the detail (nearest file wins).
+<!-- @end -->
 
 ## Map
 

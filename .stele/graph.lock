@@ -1,0 +1,78 @@
+{
+  "adrs": {},
+  "landmarks": {},
+  "nodes": {
+    "/": {
+      "budget": null,
+      "claims": [
+        {
+          "anchor": "src/main.rs#CANON",
+          "enforced_by": null,
+          "id": "canon",
+          "kind": "invariant",
+          "resolved": "src/main.rs:16",
+          "text": "lints.toml is compiled into the binary, and Cargo.toml carries it verbatim",
+          "verified": {
+            "digest": "5a6c29182e4278d392e6962ed32e6aed6c599e436c9db79cc36a4184e1227a61",
+            "sha": "19c6a71beb093cdbb250c9b692a16ed5e8e465dd"
+          }
+        },
+        {
+          "anchor": "tests/lints.rs#dogfood",
+          "enforced_by": null,
+          "id": "dogfood",
+          "kind": "invariant",
+          "resolved": "tests/lints.rs:138",
+          "text": "tests/lints.rs dogfood asserts Cargo.toml carries lints.toml verbatim",
+          "verified": {
+            "digest": "da41bc4282022f276dc7430dcf4c9ade4b9ac54eeda47a13c311545f0fc05436",
+            "sha": "19c6a71beb093cdbb250c9b692a16ed5e8e465dd"
+          }
+        },
+        {
+          "anchor": "src/main.rs#SKIP",
+          "enforced_by": null,
+          "id": "skip",
+          "kind": "invariant",
+          "resolved": "src/main.rs:25",
+          "text": "the dirless walk skips .archive, .git, _build, deps, node_modules and target",
+          "verified": {
+            "digest": "97916c2d54272ba7faad0f7ec5e2e26a149e0b87e44630f5d8a67fbeb0c85de7",
+            "sha": "19c6a71beb093cdbb250c9b692a16ed5e8e465dd"
+          }
+        },
+        {
+          "anchor": "src/main.rs#TRACKED",
+          "enforced_by": null,
+          "id": "tracked",
+          "kind": "invariant",
+          "resolved": "src/main.rs:35",
+          "text": "tracked.toml is compiled in; a dirless walk acts only on the crates it lists",
+          "verified": {
+            "digest": "b68436d8c29a72aa78ee39422a22f3d8401f50db8c7658f92c0618ad7ea0ef3b",
+            "sha": "19c6a71beb093cdbb250c9b692a16ed5e8e465dd"
+          }
+        }
+      ],
+      "commands": {
+        "check": "mise run check",
+        "cover": "mise run cover",
+        "lint": "cargo clippy --all-targets -- -D warnings && cargo fmt --check",
+        "test": "cargo test"
+      },
+      "contains": [],
+      "declared": {
+        "allow": [],
+        "decided_by": [],
+        "depends": []
+      },
+      "extracted": {
+        "imports": []
+      },
+      "id": "/",
+      "kind": "system",
+      "purpose": "rust — lints.toml, the canonical maximalist opt-out [lints] table every jgeschwendt crate pastes, and `lints`, the binary that holds the grove to it (check, sync, report, inventory)."
+    }
+  },
+  "version": 2
+}
